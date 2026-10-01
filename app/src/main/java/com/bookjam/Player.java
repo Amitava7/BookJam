@@ -309,12 +309,12 @@ final class Player {
             if (x == mp) onCompleted();
         });
         p.setOnSeekCompleteListener(x -> {
+            if (x != mp) return;
+            long at = x.getCurrentPosition();
+            Log.i(TAG, "seek done at " + at + ", wanted " + seekTarget);
             // An earlier seek can finish after a newer one was asked for; only
             // let go of the target once the player has actually reached it.
-            if (x == mp && seekTarget >= 0
-                    && Math.abs(x.getCurrentPosition() - seekTarget) < 1500) {
-                seekTarget = -1;
-            }
+            if (seekTarget >= 0 && Math.abs(at - seekTarget) < 1500) seekTarget = -1;
         });
         p.setOnErrorListener((x, what, extra) -> {
             if (x == mp) onError("error " + what + "/" + extra);
@@ -516,7 +516,9 @@ final class Player {
             publish();
             return;
         }
-        long target = position() + delta, d = duration();
+        long from = position(), target = from + delta, d = duration();
+        Log.i(TAG, "skip " + delta + " ms: " + from + " -> " + target + " of " + d
+                + (seekTarget >= 0 ? " (seek to " + seekTarget + " pending)" : ""));
         if (target < 0 && index > 0) {
             keepTrackPosition();
             load(index - 1, target, wantPlay);

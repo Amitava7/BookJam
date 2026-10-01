@@ -63,6 +63,8 @@ fail() {
     echo "::error::$*"
     shot "failed"
     show "at the failure"
+    echo "--- BookJam's log"
+    adb logcat -d -s BookJam:V AndroidRuntime:E 2>/dev/null | tail -60 || true
     exit 1
 }
 
@@ -257,10 +259,12 @@ tap_xy $PLAY
 sleep 1.5
 wait_state PAUSED
 P0=$(pb pos)
+adb logcat -c || true
 # shellcheck disable=SC2086
 { tap_xy $FWD; tap_xy $FWD; tap_xy $FWD; }
 sleep 1.5
 P1=$(pb pos)
+adb logcat -d -s BookJam:V | tail -20 || true
 between "three taps forward" $((P1 - P0)) 29000 31000
 # shellcheck disable=SC2086
 tap_xy $BACK
