@@ -33,6 +33,7 @@ public final class PlaybackService extends Service {
 
     private static PlaybackService sRunning;
     private boolean foreground;
+    private String shown;       // what the notification says now
 
     /** Brings the notification and the foreground state in line with the player. */
     static void sync(Context c) {
@@ -112,6 +113,7 @@ public final class PlaybackService extends Service {
         if (sRunning == this) sRunning = null;
         stopForeground(STOP_FOREGROUND_REMOVE);
         foreground = false;
+        shown = null;
         getSystemService(NotificationManager.class).cancel(ID);
         stopSelf();
     }
@@ -122,8 +124,16 @@ public final class PlaybackService extends Service {
             shutDown();
             return;
         }
+        // Seeks and speed changes reach the lock screen through the media
+        // session; rebuild the notification, cover and all, only when what
+        // it shows has changed.
+        boolean playing = p.isPlaying();
+        String now = p.book.id + "/" + p.index + "/" + p.title() + "/" + playing + "/"
+                + System.identityHashCode(p.art);
+        if (now.equals(shown) && foreground == playing) return;
+        shown = now;
         Notification n = build(p);
-        if (p.isPlaying()) {
+        if (playing) {
             goForeground(n);
         } else {
             if (foreground) {

@@ -11,6 +11,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
@@ -226,7 +227,7 @@ public final class PlayerActivity extends Activity implements Player.Listener {
         buttons.setGravity(Gravity.CENTER);
         ImageButton rewind = Ui.iconButton(this, R.drawable.ic_replay_10, 80, 40,
                 Ui.withAlpha(Ui.TEXT, 0x16), Ui.TEXT, "Back 10 seconds");
-        rewind.setOnClickListener(v -> skip(-1));
+        skipOnTap(rewind, -1);
         play = Ui.iconButton(this, R.drawable.ic_play, 100, 46, Ui.TEXT, Ui.BG, "Play");
         play.setElevation(Ui.dp(this, 6));
         play.setOnClickListener(v -> {
@@ -235,7 +236,7 @@ public final class PlayerActivity extends Activity implements Player.Listener {
         });
         ImageButton forward = Ui.iconButton(this, R.drawable.ic_forward_10, 80, 40,
                 Ui.withAlpha(Ui.TEXT, 0x16), Ui.TEXT, "Forward 10 seconds");
-        forward.setOnClickListener(v -> skip(1));
+        skipOnTap(forward, 1);
         LinearLayout.LayoutParams gap = (LinearLayout.LayoutParams) play.getLayoutParams();
         gap.leftMargin = gap.rightMargin = Ui.dp(this, 26);
         buttons.addView(rewind);
@@ -363,6 +364,37 @@ public final class PlayerActivity extends Activity implements Player.Listener {
         GradientDrawable g = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
                 new int[]{top, mid, Ui.BG});
         root.setBackground(g);
+    }
+
+    /**
+     * Counts every lift of the finger as a tap. A plain click listener drops
+     * a tap now and then when they come quickly, because the pressed state
+     * from the last tap is cleared just as the next one lands; for a button
+     * that is meant to be tapped three times in a row, that loses 10 s.
+     * TalkBack and keyboards still go through the click listener.
+     */
+    private void skipOnTap(final View b, final int direction) {
+        b.setOnClickListener(v -> skip(direction));
+        b.setOnTouchListener((v, e) -> {
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    v.drawableHotspotChanged(e.getX(), e.getY());
+                    v.setPressed(true);
+                    v.animate().scaleX(0.93f).scaleY(0.93f).setDuration(90).start();
+                    break;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    v.setPressed(false);
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(160).start();
+                    boolean inside = e.getX() >= 0 && e.getY() >= 0
+                            && e.getX() <= v.getWidth() && e.getY() <= v.getHeight();
+                    if (e.getActionMasked() == MotionEvent.ACTION_UP && inside) skip(direction);
+                    break;
+                default:
+                    break;
+            }
+            return true;
+        });
     }
 
     /** One tap is 10 seconds; each further tap within a moment adds another 10. */
