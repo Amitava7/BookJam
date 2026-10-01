@@ -19,19 +19,31 @@ mkdir -p "$SHOTS"
 
 shot() { adb exec-out screencap -p > "$SHOTS/$1.png" || true; }
 
-# The screen's view hierarchy as XML. uiautomator gives up on a screen that
-# will not settle, so try a few times and say why in the log.
+# The screen's view hierarchy as XML, streamed straight out rather than via
+# a file on the shared storage. uiautomator misses now and then, silently and
+# a few times running, so fall back to a private file, retry with a growing
+# pause, and log each miss.
 ui() {
-    local i out err
-    for i in 1 2 3 4; do
-        adb shell rm -f /sdcard/ui.xml >/dev/null 2>&1 || true
-        err=$(adb shell uiautomator dump /sdcard/ui.xml 2>&1 || true)
-        out=$(adb shell cat /sdcard/ui.xml 2>/dev/null || true)
+    local i out
+    for i in 1 2 3 4 5 6; do
+        out=$(adb exec-out uiautomator dump /dev/tty 2>&1 || true)
         case "$out" in
-            *'<hierarchy'*) printf '%s\n' "$out"; return 0 ;;
+            *'</hierarchy>'*)
+                printf '%s\n' "${out%%</hierarchy>*}</hierarchy>"
+                return 0
+                ;;
         esac
-        echo "uiautomator dump failed (try $i): $err" >&2
-        sleep 1
+        echo "uiautomator dump to stdout missed (try $i): ${out:0:160}" >&2
+        # The same through a file outside the shared storage.
+        out=$(adb shell 'rm -f /data/local/tmp/ui.xml; uiautomator dump /data/local/tmp/ui.xml >/dev/null 2>&1; cat /data/local/tmp/ui.xml' 2>/dev/null || true)
+        case "$out" in
+            *'</hierarchy>'*)
+                printf '%s\n' "$out"
+                return 0
+                ;;
+        esac
+        echo "uiautomator dump to a file missed (try $i)" >&2
+        sleep "$i"
     done
 }
 
@@ -64,12 +76,22 @@ locate() {
         | tr -c '0-9' ' ' | awk '{print int(($1+$3)/2), int(($2+$4)/2)}' || true
 }
 
+# Like locate, but keeps looking for a few seconds before giving up.
+find_xy() {
+    local i xy
+    for i in 1 2 3 4 5 6; do
+        xy=$(locate "$1" "${2:-}")
+        if [ -n "$xy" ]; then echo "$xy"; return 0; fi
+        sleep 1
+    done
+}
+
 tap_xy() { adb shell input tap "$1" "$2"; }
 
 # tap <match> [-i] [seconds to wait after]
 tap() {
     local xy
-    xy=$(locate "$1" "${2:-}")
+    xy=$(find_xy "$1" "${2:-}")
     [ -n "$xy" ] || fail "nothing on screen matches $1"
     echo "tap $1 at $xy"
     # shellcheck disable=SC2086
@@ -78,9 +100,13 @@ tap() {
 }
 
 expect() {
-    local x
-    x=$(ui)
-    grep -qF -- "$1" <<<"$x" || fail "expected to see $1"
+    local i x
+    for i in 1 2 3 4 5; do
+        x=$(ui)
+        if grep -qF -- "$1" <<<"$x"; then return 0; fi
+        sleep 1
+    done
+    fail "expected to see $1"
 }
 
 wait_for() {
@@ -205,12 +231,12 @@ crashed open-player
 expect 'text="Chapter 1"'
 [ "$(pb title)" = "Chapter 1" ] || fail "the session says '$(pb title)', not Chapter 1"
 # Where the controls are, read once while paused.
-PLAY=$(locate 'content-desc="Play"')
-BACK=$(locate 'content-desc="Back 10 seconds"')
-FWD=$(locate 'content-desc="Forward 10 seconds"')
-SPEED=$(locate 'content-desc="Playback speed"')
-SLEEP=$(locate 'content-desc="Sleep timer"')
-CHAPTERS=$(locate 'content-desc="Chapters"')
+PLAY=$(find_xy 'content-desc="Play"')
+BACK=$(find_xy 'content-desc="Back 10 seconds"')
+FWD=$(find_xy 'content-desc="Forward 10 seconds"')
+SPEED=$(find_xy 'content-desc="Playback speed"')
+SLEEP=$(find_xy 'content-desc="Sleep timer"')
+CHAPTERS=$(find_xy 'content-desc="Chapters"')
 for v in "$PLAY" "$BACK" "$FWD" "$SPEED" "$SLEEP" "$CHAPTERS"; do
     [ -n "$v" ] || fail "a player control is missing"
 done
@@ -291,7 +317,7 @@ expect 'text="1.5×"'
 tap_xy $SLEEP
 sleep 2
 shot 13-sleep
-EOC=$(locate 'text="End of this chapter"')
+EOC=$(find_xy 'text="End of this chapter"')
 [ -n "$EOC" ] || fail "no end-of-chapter option"
 tap 'text="5 min"' "" 1.5
 expect 'text="5 min"'
