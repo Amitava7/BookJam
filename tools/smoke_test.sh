@@ -90,6 +90,12 @@ find_xy() {
 
 tap_xy() { adb shell input tap "$1" "$2"; }
 
+# Opens BookJam the way its home-screen icon does.
+launch() {
+    adb shell am start -W -a android.intent.action.MAIN \
+        -c android.intent.category.LAUNCHER -f 0x10200000 -n "$PKG/.MainActivity"
+}
+
 # tap <match> [-i] [seconds to wait after]
 tap() {
     local xy
@@ -187,7 +193,7 @@ adb push testbooks/Audiobooks /sdcard/ >/dev/null
 adb shell ls -lR /sdcard/Audiobooks
 
 # ---- 1. an empty library -----------------------------------------------------
-adb shell am start -W -n "$PKG/.MainActivity"
+launch
 sleep 4
 shot 01-empty-library
 crashed launch
@@ -374,7 +380,7 @@ PID=$(adb shell pidof "$PKG" | tr -d '\r' || true)
 adb shell kill -9 "$PID"
 sleep 3
 [ -z "$(adb shell pidof "$PKG" | tr -d '\r' || true)" ] || fail "BookJam survived kill -9"
-adb shell am start -W -n "$PKG/.MainActivity"
+launch
 sleep 5
 shot 17-after-kill
 crashed relaunch
@@ -415,7 +421,7 @@ case "$FOCUS" in *"$PKG"*) fail "BookJam is still on screen after the sleep time
 notes=$(adb shell dumpsys notification --noredact)
 if grep -q "pkg=$PKG" <<<"$notes"; then fail "the notification outlived the sleep timer"; fi
 shot 20-closed-by-timer
-adb shell am start -W -n "$PKG/.MainActivity"
+launch
 sleep 4
 expect 'text="02 Closing"'
 shot 21-next-time

@@ -19,8 +19,12 @@
         android:supportsRtl="false"
         android:theme="@style/AppTheme">
 
+        <!-- clearTaskOnLaunch: the home-screen icon always opens the library,
+             with the last book one tap away in the bar at the bottom. Recent
+             apps still returns to wherever you were. -->
         <activity
             android:name=".MainActivity"
+            android:clearTaskOnLaunch="true"
             android:exported="true"
             android:launchMode="singleTop">
             <intent-filter>
