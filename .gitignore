@@ -1,0 +1,13 @@
+# Gradle / Android build output
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# Written by tools/make_test_book.py for the emulator smoke test
+shots/
+testbooks/
+__pycache__/
