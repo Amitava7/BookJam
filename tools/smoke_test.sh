@@ -19,10 +19,20 @@ mkdir -p "$SHOTS"
 
 shot() { adb exec-out screencap -p > "$SHOTS/$1.png" || true; }
 
+# The screen's view hierarchy as XML. uiautomator gives up on a screen that
+# will not settle, so try a few times and say why in the log.
 ui() {
-    adb shell rm -f /sdcard/ui.xml >/dev/null 2>&1 || true
-    adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1 || true
-    adb shell cat /sdcard/ui.xml 2>/dev/null || true
+    local i out err
+    for i in 1 2 3 4; do
+        adb shell rm -f /sdcard/ui.xml >/dev/null 2>&1 || true
+        err=$(adb shell uiautomator dump /sdcard/ui.xml 2>&1 || true)
+        out=$(adb shell cat /sdcard/ui.xml 2>/dev/null || true)
+        case "$out" in
+            *'<hierarchy'*) printf '%s\n' "$out"; return 0 ;;
+        esac
+        echo "uiautomator dump failed (try $i): $err" >&2
+        sleep 1
+    done
 }
 
 texts() {
@@ -31,10 +41,16 @@ texts() {
     grep -o 'text="[^"]*"\|content-desc="[^"]*"' <<<"$x" | grep -v '=""' | head -60 || true
 }
 
+# Prints what is on screen, for following the run in the log.
+show() {
+    echo "--- on screen: $1 ($(adb shell dumpsys window | grep -m1 mCurrentFocus | tr -d '\r' | sed 's/^ *//'))"
+    texts | sed 's/^/    /'
+}
+
 fail() {
     echo "::error::$*"
     shot "failed"
-    texts
+    show "at the failure"
     exit 1
 }
 
@@ -152,23 +168,27 @@ expect 'text="No books yet"'
 # ---- 2. add the Audiobooks folder through the system folder picker ------------
 tap 'text="Add a folder"' "" 4
 shot 02-picker
-if [ -z "$(locate 'text="Audiobooks"')" ]; then
-    # Not opened at the top of the phone's storage: get there from the roots.
+show "folder picker"
+if [ -z "$(locate 'text="Audiobooks"' -i)" ]; then
+    # Not opened at the top of the phone's storage: get there from the list
+    # of roots. The storage root is the one that says how much space is free.
     xy=$(locate 'content-desc="Show roots"' -i)
     # shellcheck disable=SC2086
     if [ -n "$xy" ]; then tap_xy $xy; sleep 2; fi
     shot 02b-roots
-    for name in 'sdk_gphone' 'Internal storage' 'Android SDK' 'emulator'; do
-        xy=$(locate "text=\"$name" -i)
-        # shellcheck disable=SC2086
-        if [ -n "$xy" ]; then tap_xy $xy; sleep 3; break; fi
-    done
+    show "picker roots"
+    xy=$(locate ' free"' -i)
+    # shellcheck disable=SC2086
+    if [ -n "$xy" ]; then tap_xy $xy; sleep 3; fi
+    show "picker storage root"
 fi
-wait_for 'text="Audiobooks"' 10
-tap 'text="Audiobooks"' "" 3
+wait_for 'text="Audiobooks"' 15
+tap 'text="Audiobooks"' -i 3
 shot 03-in-audiobooks
+show "inside Audiobooks"
 tap 'text="Use this folder"' -i 3
 shot 04-allow
+show "allow access"
 tap 'text="Allow"' -i 4
 
 # ---- 3. one book per sub-folder, named after the folder ------------------------
