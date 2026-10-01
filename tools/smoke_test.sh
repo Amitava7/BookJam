@@ -137,8 +137,12 @@ crashed() {
 }
 
 # BookJam's media session, as the lock screen sees it.
+# Only BookJam's own block: other apps' sessions (Bluetooth's, say) can be
+# listed above it, each starting with a "<tag> <package>/<tag> (userId=N)" line.
 session() {
-    adb shell dumpsys media_session | tr -d '\r' | awk -v p="$PKG/" 'index($0, p) {f=1} f'
+    adb shell dumpsys media_session | tr -d '\r' | awk -v p=" $PKG/" '
+        /^    [^ ].* \(userId=[0-9]+\)$/ { mine = index($0, p) > 0 }
+        mine'
 }
 
 # pb state|pos|speed|title
