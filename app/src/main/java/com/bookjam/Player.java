@@ -53,6 +53,7 @@ final class Player {
     private static final long FADE = 15_000;
     private static final long UNDO_FOR = 12_000;
     private static final long BIG_JUMP = 30_000;
+    private static final long SEEK_PATIENCE = 3_000;
     static final String CUSTOM_REWIND = "com.bookjam.REWIND";
     static final String CUSTOM_FORWARD = "com.bookjam.FORWARD";
 
@@ -87,7 +88,8 @@ final class Player {
     private boolean prepared;
     private boolean wantPlay;           // playing, or about to be once the file is ready
     private long startAt;               // where to start once prepared; negative counts from the end
-    private long seekTarget = -1;       // a seek still in flight
+    private long seekTarget = -1;       // the newest seek, until the player gets there
+    private long seekAt;                // when it was asked for
     private boolean resumeOnGain;       // paused for a phone call or a navigation prompt
     private boolean noisyRegistered;
     private long lastSave;
@@ -133,7 +135,15 @@ final class Player {
 
     long position() {
         if (book == null || tracks.isEmpty()) return 0;
-        if (mp != null && prepared) return seekTarget >= 0 ? seekTarget : mp.getCurrentPosition();
+        if (mp != null && prepared) {
+            // Quick taps each start a seek before the last one has finished;
+            // count from where the newest is going, not where the player is.
+            if (seekTarget >= 0 && SystemClock.elapsedRealtime() - seekAt < SEEK_PATIENCE) {
+                return seekTarget;
+            }
+            seekTarget = -1;
+            return mp.getCurrentPosition();
+        }
         if (startAt >= 0) return startAt;
         return Math.max(0, tracks.get(index).dur + startAt);
     }
@@ -299,7 +309,12 @@ final class Player {
             if (x == mp) onCompleted();
         });
         p.setOnSeekCompleteListener(x -> {
-            if (x == mp) seekTarget = -1;
+            // An earlier seek can finish after a newer one was asked for; only
+            // let go of the target once the player has actually reached it.
+            if (x == mp && seekTarget >= 0
+                    && Math.abs(x.getCurrentPosition() - seekTarget) < 1500) {
+                seekTarget = -1;
+            }
         });
         p.setOnErrorListener((x, what, extra) -> {
             if (x == mp) onError("error " + what + "/" + extra);
@@ -329,6 +344,7 @@ final class Player {
         startAt = 0;
         if (from > 0) {
             seekTarget = from;
+            seekAt = SystemClock.elapsedRealtime();
             mp.seekTo(from, MediaPlayer.SEEK_CLOSEST);
         }
         if (wantPlay) startPlayback();
@@ -472,6 +488,7 @@ final class Player {
         ms = Math.max(0, ms);
         if (mp != null && prepared) {
             seekTarget = ms;
+            seekAt = SystemClock.elapsedRealtime();
             mp.seekTo(ms, MediaPlayer.SEEK_CLOSEST);
         } else {
             startAt = ms;
