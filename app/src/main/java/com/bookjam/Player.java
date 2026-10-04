@@ -54,6 +54,8 @@ final class Player {
     private static final long UNDO_FOR = 12_000;
     private static final long BIG_JUMP = 30_000;
     private static final long SEEK_PATIENCE = 3_000;
+    /** How loud the book stays under a notification sound or a navigation prompt. */
+    private static final float DUCK = 0.2f;
     static final String CUSTOM_REWIND = "com.bookjam.REWIND";
     static final String CUSTOM_FORWARD = "com.bookjam.FORWARD";
 
@@ -85,12 +87,23 @@ final class Player {
     String error;
 
     private MediaPlayer mp;
+    /**
+     * The following file, opened ahead of time and handed to the current
+     * player, which starts it the instant it ends. The switch happens inside
+     * Android's media server, so it needs nothing from this app: no gap, and
+     * no chance of the phone dozing off between two chapters.
+     */
+    private MediaPlayer next;
+    private String nextDoc;
+    private boolean nextReady;
+    private final PowerManager.WakeLock awake;
     private boolean prepared;
     private boolean wantPlay;           // playing, or about to be once the file is ready
     private long startAt;               // where to start once prepared; negative counts from the end
     private long seekTarget = -1;       // the newest seek, until the player gets there
     private long seekAt;                // when it was asked for
-    private boolean resumeOnGain;       // paused for a phone call or a navigation prompt
+    private boolean resumeOnGain;       // paused for a call, to carry on when it ends
+    private boolean ducked;             // turned down under a notification or a prompt
     private boolean noisyRegistered;
     private long lastSave;
     private String metaKey;
@@ -107,9 +120,19 @@ final class Player {
         audio = c.getSystemService(AudioManager.class);
         focus = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                 .setAudioAttributes(attrs)
-                .setWillPauseWhenDucked(true)
+                .setWillPauseWhenDucked(false)
                 .setOnAudioFocusChangeListener(this::onFocus, main)
                 .build();
+        // A call can start while the book is only turned down; pause for it then.
+        audio.addOnModeChangedListener(main::post, mode -> {
+            if (ducked && wantPlay && inCall()) interrupt();
+        });
+        // Held while playing. Between one file ending and the next starting
+        // nothing else keeps the phone awake, and with the screen off it can
+        // fall asleep right there and leave the book stopped.
+        awake = c.getSystemService(PowerManager.class)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BookJam:playback");
+        awake.setReferenceCounted(false);
         session = new MediaSession(c, TAG);
         session.setCallback(new SessionCallback(), main);
         Intent open = new Intent(c, PlayerActivity.class)
@@ -258,6 +281,7 @@ final class Player {
                     if (!tracks.isEmpty()) load(0, 0, wantPlay);
                 } else {
                     index = at;
+                    prepareNext();
                 }
                 publish();
                 measure(b);
@@ -298,12 +322,27 @@ final class Player {
         startAt = from;
         seekTarget = -1;
         book.track = t.doc;
-        final MediaPlayer p = new MediaPlayer();
+        final MediaPlayer p = newPlayer();
         mp = p;
+        try {
+            p.setDataSource(ctx, t.uri(book.treeUri()));
+            p.prepareAsync();
+        } catch (Exception e) {
+            onError(String.valueOf(e));
+            return;
+        }
+        saveNow();
+        publish();
+    }
+
+    /** A player wired to this class. It may start out as the next file and become the current one. */
+    private MediaPlayer newPlayer() {
+        MediaPlayer p = new MediaPlayer();
         p.setAudioAttributes(attrs);
         p.setWakeMode(ctx, PowerManager.PARTIAL_WAKE_LOCK);
         p.setOnPreparedListener(x -> {
             if (x == mp) onPrepared();
+            else if (x == next) onNextPrepared();
         });
         p.setOnCompletionListener(x -> {
             if (x == mp) onCompleted();
@@ -318,17 +357,64 @@ final class Player {
         });
         p.setOnErrorListener((x, what, extra) -> {
             if (x == mp) onError("error " + what + "/" + extra);
+            else if (x == next) dropNext();
             return true;
         });
+        return p;
+    }
+
+    /** Opens the file after this one and lines it up to start the moment this one ends. */
+    private void prepareNext() {
+        dropNext();
+        if (book == null || mp == null || !prepared || sleepEndOfTrack
+                || index >= tracks.size() - 1) return;
+        Library.Track t = tracks.get(index + 1);
+        MediaPlayer p = newPlayer();
+        next = p;
+        nextDoc = t.doc;
         try {
             p.setDataSource(ctx, t.uri(book.treeUri()));
             p.prepareAsync();
         } catch (Exception e) {
-            onError(String.valueOf(e));
+            Log.w(TAG, "cannot open the next file ahead", e);
+            dropNext();
+        }
+    }
+
+    private void onNextPrepared() {
+        if (mp == null || !prepared) {
+            dropNext();
             return;
         }
-        saveNow();
-        publish();
+        try {
+            float v = volume();
+            next.setVolume(v, v);
+            mp.setNextMediaPlayer(next);
+            nextReady = true;
+        } catch (RuntimeException e) {
+            Log.w(TAG, "cannot line up the next file", e);
+            dropNext();
+        }
+    }
+
+    private void dropNext() {
+        if (next == null) return;
+        MediaPlayer p = next;
+        next = null;
+        nextDoc = null;
+        nextReady = false;
+        if (mp != null) {
+            try {
+                mp.setNextMediaPlayer(null);
+            } catch (RuntimeException ignored) {
+                // the current player is already finished with
+            }
+        }
+        try {
+            p.release();
+        } catch (RuntimeException ignored) {
+            // already gone
+        }
     }
 
     private void onPrepared() {
@@ -349,11 +435,45 @@ final class Player {
         }
         if (wantPlay) startPlayback();
         publish();
+        prepareNext();
     }
 
     private void onCompleted() {
-        finishTrack(index);
-        boolean more = index < tracks.size() - 1;
+        int ended = index;
+        finishTrack(ended);
+        boolean more = ended < tracks.size() - 1;
+        if (more && nextReady && tracks.get(ended + 1).doc.equals(nextDoc) && !sleepEndOfTrack) {
+            // Android has already started the next file; take it over.
+            MediaPlayer old = mp;
+            mp = next;
+            next = null;
+            nextDoc = null;
+            nextReady = false;
+            try {
+                old.release();
+            } catch (RuntimeException ignored) {
+                // already gone
+            }
+            index = ended + 1;
+            prepared = true;
+            startAt = 0;
+            seekTarget = -1;
+            Library.Track t = tracks.get(index);
+            book.track = t.doc;
+            long d = mp.getDuration();
+            if (d > 0 && d != t.dur) {
+                t.dur = d;
+                lib.saveDuration(book.id, t.doc, d);
+            }
+            Log.i(TAG, "next file took over: " + title());
+            if (!wantPlay && mp.isPlaying()) mp.pause();
+            applyVolume();
+            applySpeed();
+            saveNow();
+            publish();
+            prepareNext();
+            return;
+        }
         if (sleepEndOfTrack) {
             sleepEndOfTrack = false;
             if (more) load(index + 1, 0, false);
@@ -382,6 +502,7 @@ final class Player {
     }
 
     private void release() {
+        dropNext();
         if (mp == null) return;
         MediaPlayer p = mp;
         mp = null;
@@ -429,7 +550,10 @@ final class Player {
         wantPlay = false;
         if (byUser) resumeOnGain = false;
         if (mp != null && prepared && mp.isPlaying()) mp.pause();
-        if (byUser) audio.abandonAudioFocusRequest(focus);
+        if (byUser) {
+            audio.abandonAudioFocusRequest(focus);
+            ducked = false;
+        }
         unregisterNoisy();
         saveNow();
         publish();
@@ -445,9 +569,9 @@ final class Player {
             wantPlay = false;
             return;
         }
-        float v = volume();
-        mp.setVolume(v, v);
+        ducked = false;
         mp.start();
+        applyVolume();
         applySpeed();
         if (!noisyRegistered) {
             // Headphones unplugged or Bluetooth dropped: pause rather than
@@ -587,9 +711,11 @@ final class Player {
     // ---- the sleep timer ----------------------------------------------------
 
     void sleepIn(long ms) {
+        boolean wasEndOfTrack = sleepEndOfTrack;
         sleepEndOfTrack = false;
         sleepAt = SystemClock.elapsedRealtime() + ms;
-        restoreVolume();
+        applyVolume();
+        if (wasEndOfTrack) prepareNext();
         tick();
         publish();
     }
@@ -597,26 +723,39 @@ final class Player {
     void sleepAtEndOfTrack() {
         sleepAt = 0;
         sleepEndOfTrack = true;
-        restoreVolume();
+        dropNext();         // stop at the end of this file, not run on into the next
+        applyVolume();
         publish();
     }
 
     void sleepOff() {
+        boolean wasEndOfTrack = sleepEndOfTrack;
         sleepAt = 0;
         sleepEndOfTrack = false;
-        restoreVolume();
+        applyVolume();
+        if (wasEndOfTrack) prepareNext();
         publish();
     }
 
-    /** The last 15 seconds before the timer ends fade out, so the stop is not abrupt. */
+    /**
+     * Full volume, except turned down under a notification sound, and fading
+     * out over the last 15 seconds of a sleep timer so the stop is not abrupt.
+     */
     private float volume() {
+        float v = 1f;
         long left = sleepLeft();
-        if (sleepAt == 0 || left >= FADE) return 1f;
-        return Math.max(0f, left / (float) FADE);
+        if (sleepAt != 0 && left < FADE) v = Math.max(0f, left / (float) FADE);
+        return ducked ? v * DUCK : v;
     }
 
-    private void restoreVolume() {
-        if (mp != null && prepared) mp.setVolume(1f, 1f);
+    private void applyVolume() {
+        float v = volume();
+        try {
+            if (mp != null && prepared) mp.setVolume(v, v);
+            if (next != null) next.setVolume(v, v);
+        } catch (RuntimeException ignored) {
+            // a player in the middle of being released
+        }
     }
 
     /** The timer ran out: stop, save, and close the app. */
@@ -684,10 +823,7 @@ final class Player {
                 close();
                 return;
             }
-            if (mp != null && prepared) {
-                float v = volume();
-                mp.setVolume(v, v);
-            }
+            applyVolume();
         }
         if (wantPlay && now - lastSave >= SAVE_EVERY) {
             saveNow();
@@ -701,6 +837,11 @@ final class Player {
     // ---- telling everyone ---------------------------------------------------
 
     private void publish() {
+        if (wantPlay && book != null) {
+            if (!awake.isHeld()) awake.acquire();
+        } else if (awake.isHeld()) {
+            awake.release();
+        }
         updateSession();
         PlaybackService.sync(ctx);
         for (Listener l : new ArrayList<>(listeners)) l.onPlayerChanged();
@@ -752,21 +893,30 @@ final class Player {
 
     // ---- the outside world --------------------------------------------------
 
+    /** Whether the book is paused for a call and will carry on by itself after it. */
+    boolean waitingToResume() {
+        return book != null && resumeOnGain;
+    }
+
     private void onFocus(int change) {
         switch (change) {
             case AudioManager.AUDIOFOCUS_LOSS:
+                // Another player has taken over for good: stop, and stay stopped.
                 pause(true);
                 break;
-            case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
             case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK:
-                // A call or a navigation prompt. Spoken word is lost under
-                // ducking, so pause, and carry on when it is over.
-                if (wantPlay) {
-                    resumeOnGain = true;
-                    pause(false);
-                }
+                // A notification sound or a navigation prompt: keep going, quieter.
+                duck(true);
+                break;
+            case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
+                // A call pauses the book, which carries on when the call ends.
+                // Anything else that wants the speaker for a moment gets the
+                // book turned down instead, never stopped.
+                if (inCall()) interrupt();
+                else duck(true);
                 break;
             case AudioManager.AUDIOFOCUS_GAIN:
+                duck(false);
                 if (resumeOnGain) {
                     resumeOnGain = false;
                     play();
@@ -775,6 +925,25 @@ final class Player {
             default:
                 break;
         }
+    }
+
+    /** Ringing, on a phone call, or on a call in an app like WhatsApp. */
+    private boolean inCall() {
+        return audio.getMode() != AudioManager.MODE_NORMAL;
+    }
+
+    private void interrupt() {
+        if (!wantPlay) return;
+        resumeOnGain = true;
+        duck(false);
+        pause(false);
+    }
+
+    private void duck(boolean on) {
+        if (ducked == on) return;
+        ducked = on;
+        Log.i(TAG, on ? "turned down for another sound" : "back to full volume");
+        applyVolume();
     }
 
     private final BroadcastReceiver noisy = new BroadcastReceiver() {

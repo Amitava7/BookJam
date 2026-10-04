@@ -59,8 +59,18 @@ back.
 locked, with the lock screen, quick panel, watch and car showing back 10,
 play/pause and forward 10. Headphone next/previous move 10 seconds rather than
 a whole file, so a stray double tap on an earbud never loses your chapter.
-Unplugging headphones or a Bluetooth drop pauses; a phone call or navigation
-prompt pauses and resumes after.
+
+**One file after another, without stopping.** While a file plays, the next one
+is already opened and handed to Android's player, which starts it the instant
+the current one ends — no gap, and no app code in between, so the phone cannot
+doze off between two chapters with the screen off. BookJam also keeps the
+phone awake while it plays.
+
+**Interruptions.** A notification sound or a navigation prompt only turns the
+book down while it plays; it never pauses. A phone call (or a WhatsApp-style
+call) pauses it, and it carries on when the call ends — staying a foreground
+service meanwhile, so Android cannot freeze it and leave it paused. Unplugging
+headphones or a Bluetooth drop pauses, and stays paused.
 
 **Looks.** Follows the phone's dark mode. One UI's ideas throughout: a big
 title over the top third of the library that folds away as you scroll, large
@@ -104,6 +114,8 @@ repository secrets: `KEYSTORE_BASE64` (`base64 -w0 your.jks`), `KEY_ALIAS`,
    - it keeps playing on the home screen and with the screen off;
    - after `kill -9` it comes back in the same file within seconds of where it
      was;
+   - with the screen off, the end of one file runs straight on into the next
+     through the file lined up ahead of time;
    - "end of this chapter" stops at the end of the file, removes the
      notification, closes the app, and next launch starts at the next file.
 

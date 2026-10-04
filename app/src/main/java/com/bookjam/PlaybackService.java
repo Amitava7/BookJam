@@ -89,9 +89,10 @@ public final class PlaybackService extends Service {
 
     @Override
     public void onTaskRemoved(Intent rootIntent) {
-        // Swiped out of recents. Keep playing if it is playing; otherwise go.
+        // Swiped out of recents. Keep playing if it is playing, or about to
+        // carry on after a call; otherwise go.
         Player p = Player.get(this);
-        if (!p.isPlaying()) {
+        if (!p.isPlaying() && !p.waitingToResume()) {
             p.saveNow();
             shutDown();
         }
@@ -128,12 +129,16 @@ public final class PlaybackService extends Service {
         // session; rebuild the notification, cover and all, only when what
         // it shows has changed.
         boolean playing = p.isPlaying();
+        // Paused for a call, stay in the foreground: a background app gets
+        // frozen within seconds, and then it could not resume when the call
+        // ends and the book would stay paused for good.
+        boolean keep = playing || p.waitingToResume();
         String now = p.book.id + "/" + p.index + "/" + p.title() + "/" + playing + "/"
                 + System.identityHashCode(p.art);
-        if (now.equals(shown) && foreground == playing) return;
+        if (now.equals(shown) && foreground == keep) return;
         shown = now;
         Notification n = build(p);
-        if (playing) {
+        if (keep) {
             goForeground(n);
         } else {
             if (foreground) {

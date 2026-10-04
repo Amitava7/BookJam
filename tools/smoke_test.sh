@@ -396,14 +396,46 @@ wait_state PAUSED
 between "position after kill -9, was $BEFORE" "$(pb pos)" $((BEFORE - 6000)) $((BEFORE + 12000))
 shot 18-resumed
 
-# ---- 12. "end of this chapter" stops, saves and closes the app ----------------------
+# ---- 12. one file runs straight on into the next, with the screen off --------------
 adb shell input keyevent 4
 sleep 2
 tap 'text="Short Book"' "" 4
 expect 'text="01 Opening"'
+adb logcat -c || true
 # shellcheck disable=SC2086
 tap_xy $PLAY
 sleep 2
+wait_state PLAYING
+adb shell input keyevent 26
+# 01 Opening is 15 seconds long.
+for i in $(seq 1 30); do
+    [ "$(pb title)" = "02 Closing" ] && break
+    sleep 1
+done
+sleep 4
+[ "$(pb title)" = "02 Closing" ] || fail "did not go on to 02 Closing by itself, still on '$(pb title)'"
+[ "$(pb state)" = "PLAYING" ] || fail "stopped between files instead of playing on: $(pb state)"
+between "position in 02 Closing" "$(pb pos)" 0 15000
+log=$(adb logcat -d -s BookJam:V 2>/dev/null || true)
+grep -q "next file took over" <<<"$log" \
+    || fail "02 Closing was not lined up ahead of time, so there was a gap between files"
+echo "01 Opening ran straight into 02 Closing with the screen off"
+adb shell input keyevent 224
+sleep 1
+adb shell wm dismiss-keyguard || true
+sleep 2
+crashed next-file
+
+# ---- 13. "end of this chapter" stops, saves and closes the app ----------------------
+# shellcheck disable=SC2086
+tap_xy $PLAY
+sleep 1.5
+wait_state PAUSED
+# shellcheck disable=SC2086
+tap_xy $CHAPTERS
+sleep 2
+tap 'text="01 Opening"' "" 2
+[ "$(pb title)" = "01 Opening" ] || fail "picking 01 Opening played '$(pb title)'"
 wait_state PLAYING
 # shellcheck disable=SC2086
 tap_xy $SLEEP
@@ -432,4 +464,5 @@ shot 21-next-time
 crashed end
 
 echo "picker, library, playback, skips, chapters, undo, speed, sleep timer, background,"
-echo "kill -9 and the sleep timer closing the app all work"
+echo "kill -9, running on from file to file with the screen off, and the sleep timer"
+echo "closing the app all work"
