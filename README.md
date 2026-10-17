@@ -55,6 +55,18 @@ and it picks up where you were. Jumping to another chapter or dragging the
 slider a long way shows an **Undo** pill for 12 seconds that takes you straight
 back.
 
+**Picking up the thread.** BookJam remembers when you last listened to each
+book, and when you come back after a break it starts a little earlier, so you
+hear where you were before the story carries on:
+
+- back within the hour: straight on, exactly where you stopped;
+- five hours or more later the same day: back 30 seconds;
+- any time on a later day, by the calendar (last night to this evening, or
+  late last night to early this morning): back 1 minute.
+
+Going back that far can run into the end of the previous file. The Undo pill
+comes up as for a chapter jump, in case you would rather carry straight on.
+
 **In the background.** Playback carries on with the app closed or the screen
 locked, with the lock screen, quick panel, watch and car showing back 10,
 play/pause and forward 10. Headphone next/previous move 10 seconds rather than
@@ -97,7 +109,7 @@ repository secrets: `KEYSTORE_BASE64` (`base64 -w0 your.jks`), `KEY_ALIAS`,
 ## What CI does
 
 1. **Test and build release APK** — runs the JVM unit tests (natural ordering,
-   time and speed formats), assembles and signs the APK, prints a size
+   time and speed formats, how far to go back after a break), assembles and signs the APK, prints a size
    breakdown in the job summary and fails past a 1.5 MB budget.
 2. **Listen to a book on an emulator** — `tools/make_test_books.py` writes two
    small audiobooks of WAV files (`Chapter 1`, `Chapter 2`, `Chapter 10` and a
@@ -134,10 +146,11 @@ app/src/main/java/com/bookjam/
   Scanner.java          reads folders through the storage access framework
   Covers.java           finds, scales and caches covers; initials when there is none
   Natural.java          "2" before "10" ordering
+  Recap.java            how far back to start after a break
   Slider.java           the thick One UI slider
   Ui.java  Fmt.java     palette and view helpers; time and speed text
 app/src/test/java/com/bookjam/
-  NaturalTest.java  FmtTest.java
+  NaturalTest.java  FmtTest.java  RecapTest.java
 tools/
   make_test_books.py    writes the audiobooks the emulator test plays
   smoke_test.sh         drives the APK on an emulator
