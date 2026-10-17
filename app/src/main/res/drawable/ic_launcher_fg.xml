@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Headphones around an open book. Vector only: no PNG buckets. The adaptive
+     icon mask keeps the middle 66 of these 108 units, so everything sits in it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:pivotX="54"
+        android:pivotY="56"
+        android:scaleX="1.12"
+        android:scaleY="1.12">
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#FFF4F4F8"
+            android:strokeWidth="5"
+            android:strokeLineCap="round"
+            android:pathData="M31,63 L31,58 A23,23 0 0,1 77,58 L77,63" />
+        <path
+            android:fillColor="#FFF4F4F8"
+            android:strokeColor="#FFF4F4F8"
+            android:strokeWidth="4"
+            android:strokeLineJoin="round"
+            android:pathData="M27,61 L35,61 L35,76 L27,76 Z M73,61 L81,61 L81,76 L73,76 Z" />
+        <path
+            android:fillColor="#FFFFB347"
+            android:pathData="M41,61 Q47,58 53.2,61.5 L53.2,78 Q47,74.5 41,77.5 Z M54.8,61.5 Q61,58 67,61 L67,77.5 Q61,74.5 54.8,78 Z" />
+    </group>
+</vector>
