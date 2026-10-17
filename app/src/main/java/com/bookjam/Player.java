@@ -21,6 +21,7 @@ import android.os.SystemClock;
 import android.util.Log;
 import android.view.KeyEvent;
 
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -244,7 +245,9 @@ final class Player {
         undoIndex = -1;
         metaKey = null;
         session.setActive(true);
-        load(index, b.pos, play);
+        long back = play ? recapBack(b.played, b.pos) : 0;
+        if (back > 0) recap(b.pos, back);
+        else load(index, b.pos, play);
         refreshFromDisk(b);
     }
 
@@ -531,6 +534,12 @@ final class Player {
             load(0, 0, true);
             return;
         }
+        long from = mp == null ? book.pos : position();
+        long back = recapBack(book.played, from);
+        if (back > 0) {
+            recap(from, back);
+            return;
+        }
         if (mp == null) {
             load(index, book.pos, true);
             return;
@@ -539,6 +548,37 @@ final class Player {
         if (prepared) startPlayback();
         saveNow();
         publish();
+    }
+
+    /**
+     * How far back to start after a break (see Recap), given when the book was
+     * last listened to; 0 to carry straight on, or when already at the start.
+     */
+    private long recapBack(long played, long from) {
+        if (tracks.isEmpty() || (index == 0 && from <= 0)) return 0;
+        return Recap.back(played, System.currentTimeMillis(), ZoneId.systemDefault());
+    }
+
+    /**
+     * Plays from back ms before from in the current file, running on into the
+     * end of the previous one if that passes the start, so you hear where you
+     * were before the story carries on. Undo goes to where you left off.
+     */
+    private void recap(long from, long back) {
+        Log.i(TAG, "away a while: back " + back + " ms from " + from);
+        int i = index;
+        undoIndex = i;
+        undoPos = from;
+        undoUntil = SystemClock.elapsedRealtime() + UNDO_FOR;
+        long at = from - back;
+        if (at < 0 && i > 0) {
+            Library.Track t = tracks.get(i);
+            t.pos = from;
+            lib.saveTrack(book.id, t.doc, from, t.done);
+            load(i - 1, at, true);
+        } else {
+            load(i, Math.max(0, at), true);
+        }
     }
 
     void pause() {
